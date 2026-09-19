@@ -2,6 +2,8 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
 import calendar
+import uuid
+import time
 
 from config.reglas import CANCHAS_MAP, HORARIOS_CLUB, DURACIONES, PRECIOS_PARTICULARES
 from utils.database import insertar_folio, insertar_folio_dias, insertar_alumno, get_supabase, refrescar_tabla
@@ -115,8 +117,7 @@ def render():
             duracion_p = st.selectbox("Duración", list(DURACIONES.keys()), key="dur_p")
             
         with c2:
-            import datetime
-            hoy = datetime.date.today()
+            hoy = datetime.today().date()
             fi_p = st.date_input("Fecha Inicio", value=hoy, key="fi_p")
             ff_p = st.date_input("Fecha Fin (Límite)", value=hoy + timedelta(days=30), key="ff_p")
             dias_p = st.multiselect("Días de Clase", ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"], default=["Lunes", "Miércoles"])
@@ -125,12 +126,12 @@ def render():
         fechas_pre = [] if ff_p < fi_p else obtener_lista_fechas_wonox(fi_p, ff_p, dias_p)
         fechas_f = st.multiselect("Días exactos a cobrar:", options=fechas_pre, default=fechas_pre)
 
-        if st.button("✅ Procesar y Agendar Grupo", type="primary", use_container_width=True):
+        if st.button("✅ Procesar y Agendar Grupo", type="primary", use_container_width=True, key="btn_particulares"):
             if not fechas_f:
                 st.error("Debes seleccionar al menos una fecha.")
             else:
                 # 1. Calculamos horario fin
-                hora_fin_obj = datetime.datetime.strptime(hora_p, "%H:%M") + timedelta(hours=DURACIONES[duracion_p])
+                hora_fin_obj = datetime.strptime(hora_p, "%H:%M") + timedelta(hours=DURACIONES[duracion_p])
                 hora_fin_str = hora_fin_obj.strftime("%H:%M")
                 horario_str = f"{hora_p} a {hora_fin_str}"
                 
@@ -141,7 +142,6 @@ def render():
                     st.error(f"🚨 EMPALME: La cancha {nombre_c} está ocupada por el folio {folio_estorbo}.")
                 else:
                     with st.spinner("Procesando en Supabase..."):
-                        import uuid
                         grupo_id = f"PART-{str(uuid.uuid4())[:6].upper()}"
                         
                         # Cálculo de costo
@@ -182,9 +182,7 @@ def render():
                             })
                             
                         # Insertamos los Días para el Mapa de Calor (Power BI)
-                        # Buscamos el ID interno (UUID) del folio recién creado
-                        import time
-                        time.sleep(1) # Pequeña pausa para asegurar la escritura
+                        time.sleep(1.5) # Pequeña pausa para asegurar la escritura
                         refrescar_tabla("fact_folios")
                         df_f = st.session_state['db_folios']
                         ids_folios = df_f[df_f['grupo_id'] == grupo_id]['id'].tolist()
@@ -198,3 +196,120 @@ def render():
 
                     st.success(f"¡Grupo {grupo_id} agendado correctamente! Deuda lista en Caja.")
                     st.balloons()
+
+    # ==========================================
+    # PESTAÑA: ACADEMIAS
+    # ==========================================
+    with tab_academias:
+        st.markdown("### 🏆 Inscripción a Academias")
+        
+        col_a, col_b = st.columns(2)
+        with col_a:
+            tipo_academia = st.selectbox("Categoría", ["Infantiles - Juveniles", "Precompetición / Competición", "Adultos"])
+            cantidad_alumnos_acad = st.selectbox("Cantidad de Alumnos", [1, 2, 3, 4, 5, 6, 7, 8], key="cant_acad")
+            
+            # Selector Dinámico de Alumnos
+            st.markdown("**Nombres de los Alumnos:**")
+            alumnos_acad_data = []
+            opciones_alumnos_acad = ["➕ Crear Nuevo Alumno..."] + (df_alumnos['nombre_completo'].tolist() if not df_alumnos.empty else [])
+            
+            for i in range(cantidad_alumnos_acad):
+                seleccion_alumno = st.selectbox(f"Alumno {i+1}", opciones_alumnos_acad, key=f"sel_alum_acad_{i}")
+                
+                if seleccion_alumno == "➕ Crear Nuevo Alumno...":
+                    with st.container(border=True):
+                        nuevo_nombre = st.text_input(f"Nombre Completo (Alumno {i+1})", key=f"nuevo_nom_acad_{i}")
+                        es_menor = st.checkbox("Es Menor de Edad", value=True, key=f"menor_acad_{i}") # Por defecto True en Academias
+                        nombre_tutor = st.text_input("Nombre del Tutor", key=f"tutor_acad_{i}") if es_menor else ""
+                        tel_tutor = st.text_input("Teléfono (WhatsApp)", key=f"tel_acad_{i}")
+                        
+                        alumnos_acad_data.append({
+                            "es_nuevo": True,
+                            "nombre_completo": nuevo_nombre.strip().upper(),
+                            "es_menor": es_menor,
+                            "nombre_tutor": nombre_tutor.strip().upper(),
+                            "telefono_contacto": tel_tutor.strip()
+                        })
+                else:
+                    id_alumno_existente = df_alumnos[df_alumnos['nombre_completo'] == seleccion_alumno].iloc[0]['id']
+                    alumnos_acad_data.append({
+                        "es_nuevo": False,
+                        "id": id_alumno_existente,
+                        "nombre_completo": seleccion_alumno
+                    })
+
+        with col_b:
+            coach_acad_nombre = st.selectbox("Coach Responsable", list(mapa_coaches.keys()), key="co_acad")
+            id_coach_acad = mapa_coaches[coach_acad_nombre]
+            
+            tipo_cancha_acad = st.selectbox("Tipo de Cancha", list(CANCHAS_MAP.keys()), key="tp_c_acad")
+            nombre_cancha_acad = st.selectbox("Cancha Asignada", CANCHAS_MAP[tipo_cancha_acad], key="n_c_acad")
+            
+            dias_acad = st.multiselect("Días", ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"], default=["Lunes", "Miércoles"], key="d_acad")
+            
+            c_ha1, c_ha2 = st.columns(2)
+            hora_acad = c_ha1.selectbox("Hora", HORARIOS_CLUB, key="h_acad")
+            duracion_acad = c_ha2.selectbox("Duración", list(DURACIONES.keys()), key="dur_acad")
+            
+            c_v1, c_v2 = st.columns(2)
+            fi_acad = c_v1.date_input("Desde:", value=datetime.today().date(), key="fi_acad")
+            ff_acad = c_v2.date_input("Hasta (Fin de mes):", value=datetime.today().date() + timedelta(days=30), key="ff_acad")
+            
+            costo_mensual = st.number_input("Mensualidad (Por Alumno)", value=1400.0, step=100.0)
+            incluye_inscripcion = st.checkbox("Incluir Inscripción (+ $600)")
+            total_por_alumno = costo_mensual + (600 if incluye_inscripcion else 0)
+            
+            st.metric("Total base por alumno", f"${total_por_alumno:,.2f}")
+
+        if st.button("🏆 Registrar Grupo en Academia", type="primary", use_container_width=True, key="btn_academias"):
+            if not dias_acad:
+                st.error("Debes seleccionar al menos un día.")
+            else:
+                with st.spinner("Creando estructura para Power BI..."):
+                    grupo_id = f"ACAD-{str(uuid.uuid4())[:6].upper()}"
+                    
+                    for idx, alum in enumerate(alumnos_acad_data):
+                        if alum["es_nuevo"]:
+                            if not alum["nombre_completo"]: continue
+                            res_alum = insertar_alumno({
+                                "nombre_completo": alum["nombre_completo"],
+                                "es_menor": alum["es_menor"],
+                                "nombre_tutor": alum["nombre_tutor"],
+                                "telefono_contacto": alum["telefono_contacto"]
+                            })
+                            id_alum_final = res_alum["id"]
+                        else:
+                            id_alum_final = alum["id"]
+
+                        folio_individual = f"{grupo_id}-{idx+1}"
+                        insertar_folio({
+                            "folio": folio_individual,
+                            "grupo_id": grupo_id,
+                            "id_alumno": id_alum_final,
+                            "id_coach": id_coach_acad,
+                            "tipo_clase": "Academia",
+                            "cancha": nombre_cancha_acad,
+                            "hora_inicio": hora_acad,
+                            "duracion_minutos": int(DURACIONES[duracion_acad] * 60),
+                            "fecha_inicio": str(fi_acad),
+                            "fecha_fin": str(ff_acad),
+                            "total_base": total_por_alumno,
+                            "pagado": 0,
+                            "estatus": "Pendiente"
+                        })
+                        
+                    # Insertamos los Días para el Mapa de Calor (Power BI)
+                    time.sleep(1.5)
+                    refrescar_tabla("fact_folios")
+                    df_f = st.session_state['db_folios']
+                    ids_folios = df_f[df_f['grupo_id'] == grupo_id]['id'].tolist()
+                    
+                    dias_mapa_calor = []
+                    for id_f in ids_folios:
+                        for d in dias_acad:
+                            dias_mapa_calor.append({"id_folio": id_f, "dia_semana": d})
+                    
+                    insertar_folio_dias(dias_mapa_calor)
+
+                st.success(f"¡Academia {grupo_id} registrada con éxito!")
+                st.balloons()
